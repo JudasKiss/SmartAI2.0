@@ -1,0 +1,649 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper   PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN" "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="Project">
+	
+	
+<!--
+///////////프로젝트/////////////
+ -->
+	<!-- 프로젝트 리스트 가져오기 -->
+  	<select id = "selectProjectInfo" parameterType="map" resultType="smartView.ai.project.model.ProjectVO">
+		select distinct p.user_id as user_id, p.uuid as uuid, p."name" as name, p.descr as descr, p."timestamp" as timestamp, flowcount, rptcount 
+		from projects p
+		
+			left outer join 
+			(select pid, count(wid) as flowcount from public.project_workflow_map group by pid) wc
+			on p.uuid = wc.pid
+			
+			left outer join 
+			(select pid, count(report_seq) as rptcount from tb_project_report_mapping tprm group by pid) rc 
+			on p.uuid = rc.pid
+			
+			left outer join project_workflow_map pwm 
+			on p.uuid = pwm.pid 
+			
+			left outer join workflows w 
+			on pwm.wid = w.uuid
+			
+			left outer join tb_project_report_mapping tprm 
+			on p.uuid = tprm.pid 
+			
+			left outer join tb_report_info tri 
+			on tprm.report_seq = tri.report_seq 
+			
+		where p.user_id = #{user_id}
+		<choose>
+			<when test="check != null and check != '' and check =='ALL'">
+			and (p.name LIKE CONCAT('%',#{input},'%') or w.name LIKE CONCAT('%',#{input},'%') or tri.title LIKE CONCAT('%',#{input},'%'))
+			</when>
+			<when test="check != null and check != '' and check =='Project'">
+			and (p."name" LIKE CONCAT('%',#{input},'%'))
+			</when>
+			<when test="check != null and check != '' and check =='Workflow'">
+			and (w.name LIKE CONCAT('%',#{input},'%'))
+			</when>
+			<when test="check != null and check != '' and check =='Report'">
+			and (tri.title LIKE CONCAT('%',#{input},'%'))
+			</when>
+		</choose>
+		
+		
+ 		<choose>
+     		<when test="srhTag=='timestamp'">
+     			order by timestamp
+     			<if test="reverse=='true'">
+     			 desc
+     			</if>
+     		</when>
+     		
+     		<when test="srhTag=='name'">
+     			order by name
+     			<if test="reverse=='true'">
+     			 desc
+     			</if>
+     		</when>
+     	</choose>
+
+	</select> 
+	
+	
+	<!-- 프로젝트 생성 -->
+	<insert id = "insertProject" parameterType="map">
+		INSERT INTO projects
+		(
+			user_id,
+			uuid,
+			name,
+			descr,
+			timestamp
+		)VALUES(
+			#{user_id},	
+			#{uuid}, 
+			#{name},
+			#{descr},	
+			#{timestamp}
+		)
+	</insert>
+	
+	<!-- 태그 목록 조회 -->
+	<select id = "selectTagList" parameterType="String" resultType="java.util.HashMap">
+		select tag as tags
+		from tb_project_tags_info tpti
+		<if test='tag != null and tag != ""'>
+	     	where tag LIKE CONCAT('%',#{tag},'%')
+		</if>
+	</select>
+	
+	<!-- 프로젝트 당 태그 조회 -->
+	<select id = "selectTags" parameterType="map" resultType="smartView.ai.project.model.ProjectVO">
+	select uuid, string_agg(taginfo.tag, ',') as tags
+	from projects p
+	left outer join tb_project_tags_mapping tagmap on p.uuid = tagmap.pid
+	left outer join tb_project_tags_info taginfo on tagmap.tag_seq = taginfo.tag_seq 
+	where p.user_id = #{user_id}
+	group by p.uuid 
+	</select>
+	
+	<!-- 새로운 태그 생성 -->
+	<insert id ="insertTags" parameterType="map" useGeneratedKeys="true" keyProperty="tag_seq" keyColumn="tag_seq">
+		insert into tb_project_tags_info 
+		(
+			tag,
+			use_count,
+			reg_dt,
+			upd_dt
+		)values(
+			#{tag},
+			1,
+			now(),
+			null
+		)
+		on conflict (tag)
+		do nothing
+	</insert>
+	
+	<!-- 프로젝트 태그 맵핑 생성 -->
+	<insert id ="insertTagsMap" parameterType="map">
+		insert into tb_project_tags_mapping 
+		(
+			tag_seq,
+			pid,
+			reg_dt 
+		)values(
+			#{tag_seq},
+			#{pid},
+			now()
+		)
+	</insert>
+	
+	<!-- tag_seq 가져오기 -->
+	<select id = "getTagSeq" parameterType="String" resultType="int">
+		select tag_seq
+		from tb_project_tags_info tpti 
+		where tag = #{tag}
+	</select>
+	
+	
+	<!-- 태그 맵핑 삭제 -->
+	<delete id = "deleteTagMap" parameterType="java.lang.String">
+		delete 
+		from tb_project_tags_mapping 
+		where pid = #{pid}
+	</delete>
+		
+	<!-- top10 태그 조회 -->
+	<select id = "selectTop10" resultType="java.util.HashMap">
+		select tag as tags
+		from tb_project_tags_info tpti 
+		order by use_count desc
+		limit 10
+	</select>
+	
+	<!-- 태그 카운트 조회 -->
+	<select id = "selectTagCnt" parameterType="map" resultType="int">
+		select use_count 
+	    from tb_project_tags_info tpti 
+	    where tag = #{tag}
+	</select>
+	
+	<!--태그 카운트 수정-->
+	<update id ="reviseTag" parameterType="map">
+		update tb_project_tags_info
+		set
+			use_count = #{use_count}
+		where tag = #{tag}
+	</update> 
+
+	<!-- 프로젝트 수정 -->
+	<update id="reviseProject" parameterType="map">
+		UPDATE projects
+		SET 
+			name = #{name},
+			descr = #{descr},
+			timestamp = #{timestamp}
+		WHERE uuid = #{uuid}
+	</update>
+	
+	<!-- 프로젝트 수정 중 태그 삭제 -->
+	<delete id="deleteTags_R" parameterType="map">
+		delete
+		from tb_project_tags_mapping tptm 
+		using tb_project_tags_info tpti
+		where
+		tptm.tag_seq = tpti.tag_seq
+		and tpti.tag = #{tag_r}
+		and tptm.pid = #{pid}
+	</delete>
+	
+	<!-- 프로젝트 삭제 -->
+	<delete id="deleteProject" parameterType="map">
+		delete 
+		from projects as p
+		using project_workflow_map as pwm
+		where p.uuid = #{pid}
+	</delete>
+	
+	<!-- 프로젝트 이름 중복체크 -->
+	<select id="projectNameChk" parameterType="String" resultType = "int">
+      SELECT COUNT(1)
+      FROM projects
+	  WHERE name = #{name}
+   </select>
+      
+   <!-- 프로젝트 정보 가져오기 -->
+   <select id="selectProject" parameterType="java.lang.String" resultType="smartView.ai.project.model.ProjectVO">
+        SELECT 
+        	user_id
+			,uuid
+			,name
+			,descr
+			,timestamp
+		 FROM projects 
+		 WHERE uuid = #{value}		   
+	</select>
+	
+<!--
+///////////워크플로우/////////////
+ -->
+	<!-- 워크플로우 리스트 가져오기 -->
+	<select id = "selectWorkflowInfo" parameterType="map" resultType="smartView.ai.project.model.WorkflowVO">
+		select *
+		from workflows w 
+		left outer join project_workflow_map pwm on w.uuid = pwm.wid 
+		where user_id = #{user_id} and pid = #{pid}
+		order by name
+	</select>
+	
+	<!-- 워크플로우 생성 -->
+	<insert id = "insertWorkflow" parameterType="map">
+		insert into workflows 
+		(
+			user_id,
+			uuid,
+			name,
+			data,
+			descr,
+			msg_version,
+			is_batch,
+			"verbose",
+			timestamp,
+			"check"
+		)values(
+			#{user_id},
+			#{uuid},
+			#{name},
+			'{"enginesJson":{},"enginesLocation":[],"linksLocation":[],"runtype":null}',
+			#{descr},
+			'19.06',
+			1,
+			1,
+			#{timestamp},
+			null
+		)
+	</insert>
+	
+	<!-- 워크플로우 맵핑 생성 -->
+	<insert id = "insertWorkflowMap" parameterType = "map">
+		insert into project_workflow_map
+		(
+			pid,
+			wid
+		)values(
+			#{pid},
+			#{uuid}
+		)
+	</insert>
+	
+	<!-- 워크플로우 생성 시 복사할 wf 리스트 -->
+	<select id = "projectWfList" parameterType = "String" resultType ="map">
+		select p.name as pName ,string_agg(w.name, ',') as wName
+		from workflows w  
+		left outer join project_workflow_map pwm 
+		on w.uuid = pwm.wid 
+		left outer join projects p 
+		on pwm.pid = p.uuid 
+		where p.user_id = #{user_id}
+		group by pName
+	</select>
+	
+	<!-- 워크플로우 생성 시 워크플로우 이름 찾기 -->
+	<select id = "findWfName" parameterType = "map" resultType = "String">
+		select uuid
+		from workflows
+		where name = #{wname} and user_id = #{user_id}
+	</select>
+	
+	<!-- 워크플로우 슈정 -->
+	<update id = "reviseWorkflow" parameterType = "map">
+		update workflows 
+		set
+			name = #{name},	
+			descr = #{descr},
+			timestamp = #{timestamp}
+		where uuid = #{uuid}
+	</update>
+	
+	<!-- 워크플로우 삭제 -->
+	<delete id = "deleteWorkflow" parameterType = "map">
+		delete
+		from project_workflow_map as pwm
+		where pwm.wid = #{wid}
+	</delete>
+	
+	<!-- 워크플로우 삭제(프로젝트 삭제시) -->
+	<delete id = "deleteWorkflow_p" parameterType = "map">
+		delete
+		from project_workflow_map as pwm
+		where pwm.pid = #{pid}
+	</delete>
+	
+	<!-- 복사시 프로젝트 리스트 가져오기 -->
+	<select id = "selectProjectName" parameterType ="String" resultType="String">
+		select "name" 
+		from projects p 
+		where user_id = #{user_id}
+	</select>
+	
+	<!-- 복사시 프로젝트 내에 워크플로우 가져오기 -->
+	<select id = "selectProjectWfMap" parameterType = "map" resultType="map">
+		select pid,wid
+		from project_workflow_map pwm 
+		left outer join projects p 
+		on pwm.pid = p.uuid 
+		where user_id = #{user_id}
+	</select>
+	
+	<!-- 워크플로우 복사 -->
+	<insert id = "copyWorkflow" parameterType ="map">
+		insert into workflows(user_id,uuid,name,data,descr,msg_version,is_batch,"verbose","timestamp","check")
+		select user_id,#{uuid},#{name},data,#{descr},msg_version,is_batch,"verbose",#{timestamp},"check"
+		from workflows 
+		where uuid = #{wid}
+	</insert>
+	
+	<!-- 워크플로우 이름 중복 체크 -->
+	<select id = "workflowNameChk" parameterType="String" resultType="int">
+		SELECT COUNT(1)
+     	FROM workflows
+	 	WHERE name = #{name}
+	</select>
+	
+	<!-- 워크플로우 정보 가져오기 -->
+	<select id="selectWorkflow" parameterType="map" resultType="smartView.ai.project.model.WorkflowVO">
+        SELECT *
+		 FROM workflows 
+		 WHERE uuid = #{uuid}
+	</select>
+	
+	<!-- WorkflowJobID 가져오기 -->
+	<select id="getWfJobID" parameterType="map" resultType="smartView.ai.project.model.WorkflowVO">
+		select pid, name,wjm."workflowID" as workflowID ,wjm."jobID" as jobID
+		from workflow_job_map wjm 
+		left outer join workflows w on wjm."workflowID"  = w.uuid 
+		left outer join project_workflow_map pwm on w.uuid = pwm.wid
+		where pid = #{pid}
+	</select>
+	
+	<!-- 워크플로우 상태 가져오기 -->
+	<select id="getWfStatus" parameterType="java.util.List" resultType="smartView.ai.project.model.WorkflowVO">
+		select wj.id as wfJobID, string_agg(et.result,',') as result, is_active
+		from workflow_job wj 
+		left outer join engine_task et on wj.id = et.job_id
+		where wj.id
+		<foreach collection="list" item="jobIdList" separator="," open="in (" close=")">
+			#{jobIdList}
+		</foreach>
+		group by wj.id 
+	</select>
+	<!-- 전체 프로젝트 조회 -->
+	<select id = "totalAll" parameterType="String" resultType = "int">
+		select count(wid)
+		from project_workflow_map pwm
+		left outer join projects p on p.uuid =pwm.pid 
+		where p.user_id = #{user_id}
+	</select>
+	<!-- jobId 조회 -->
+	<select id = "totalJobId" parameterType="String" resultType = "String">
+		select wjm."jobID" 
+		from workflows w 
+		left outer join workflow_job_map wjm on w.uuid = wjm."workflowID" 
+		where user_id = #{user_id}
+		and not wjm."jobID" is null
+	</select>
+	
+	<!-- 워크플로우 상태 가져오기 -->
+	<select id="totalStatus" parameterType="java.util.List" resultType="smartView.ai.project.model.WorkflowVO">
+		select wj.id as wfJobID, string_agg(et.result,',') as result, is_active
+		from workflow_job wj 
+		left outer join engine_task et on wj.id = et.job_id
+		where wj.id
+		<foreach collection="list" item="totalJobId" separator="," open="in (" close=")">
+			#{totalJobId}
+		</foreach>
+		group by wj.id 
+	</select>
+	
+<!--
+/////////// 레포트/////////////
+ -->
+	<!-- 레포트 리스트 가져오기 -->
+	<select id = "selectReportInfo" parameterType="map" resultType="smartView.ai.project.model.ReportVO">
+		select *
+		from tb_report_info tri 
+		left outer join tb_project_report_mapping tprm on tri.report_seq = tprm.report_seq 
+		where tri.reg_id = #{user_id} and pid = #{pid}
+		order by title
+	</select>
+	
+	<!-- 레포트 생성 -->
+	<!-- 레포트 생성 -->
+	<insert id="insertReport" parameterType="map" useGeneratedKeys="true" keyProperty="report_seq" keyColumn="report_seq">
+		insert into tb_report_info
+		(	
+			uuid,
+			title,
+			description,
+			layout,
+			size,
+			numMark,
+			use_yn,
+			reg_seq,
+			reg_id,
+			upd_seq,
+			upd_id
+		)values(
+			#{uuid},
+			#{title},
+			#{description},
+			'h',
+			'A4',
+			'bc',
+			'y',
+			#{reg_seq},
+			#{user_id},
+			null,
+			null
+		)
+	</insert>
+		<!-- 레포트 맵핑 생성 -->
+	<insert id="insertReportMap" parameterType="map">
+		insert into tb_project_report_mapping
+		(
+			pid,
+			report_seq,
+			reg_seq,
+			reg_id
+		)values(
+			#{pid},
+			#{report_seq} :: integer,
+			#{reg_seq},
+			#{user_id}			
+		)
+	</insert>
+	
+	<!-- 리포트 생성 시 복사할 report 리스트 -->
+	<select id = "projectReportList" parameterType = "String" resultType ="map">
+		select p.name as pName ,string_agg(tri.title, ',') as rName
+		from tb_report_info tri 
+		left outer join tb_project_report_mapping tprm 
+		on tri.report_seq = tprm.report_seq 
+		left outer join projects p 
+		on tprm.pid = p.uuid 
+		where p.user_id = 'biuser'
+		group by pName
+	</select>
+	
+	<!-- 복사시 프로젝트 내에 리포트 가져오기 -->
+	<select id = "selectProjectReportMap" parameterType = "map" resultType="map">
+		select pid, report_seq 
+		from tb_project_report_mapping tprm 
+		left outer join projects p 
+		on tprm.pid = p.uuid 
+		where user_id = #{user_id}
+	</select>
+	
+	<!-- 리포트 생성 시 워크플로우 이름 찾기 -->
+	<select id = "findReportTitle" parameterType = "map" resultType = "String">
+		select report_seq 
+		from tb_report_info tri 
+		where title = #{rname} and reg_id = #{user_id}
+	</select>
+	
+	<!-- 레포트 수정 -->
+	<update id="reviseReport" parameterType="map">
+		update tb_report_info 
+		set
+			title = #{title},	
+			description = #{description},
+			upd_dt = now()
+		where report_seq = #{report_seq} :: integer
+	</update>
+	
+	<!-- 레포트 삭제 -->
+	<delete id="deleteReport" parameterType="map">
+		delete
+		from tb_project_report_mapping tprm
+		where tprm.report_seq = #{report_seq} :: integer
+	</delete>
+	
+	<!-- 레포트 삭제(프로젝트 삭제시) -->
+	<delete id="deleteReport_p" parameterType="map">
+		delete
+		from tb_project_report_mapping tprm
+		where tprm.pid = #{pid}
+	</delete>
+	
+	<!-- 레포트 복사 -->
+	<insert id = "copyReport" parameterType = "map" useGeneratedKeys="true" keyProperty="report_seq" keyColumn="report_seq">
+		insert into tb_report_info(uuid,title,description,layout,size,nummark,use_yn,reg_seq,reg_id,upd_seq,upd_id)
+		select #{uuid},#{title},#{description},layout,size,nummark,use_yn,reg_seq,reg_id,upd_seq,upd_id
+		from tb_report_info 
+		where report_seq = #{report_seq} :: integer
+	</insert>
+
+	<!-- 레포트 타이틀 중복 체크 -->
+	<select id = "reportNameChk" parameterType="String" resultType="int">
+		SELECT COUNT(1)
+     	FROM tb_report_info
+	 	WHERE title = #{title}
+	</select>
+	
+	<!-- 레포트 정보 가져오기 -->
+	<select id="selectReport" parameterType="map" resultType="smartView.ai.project.model.ReportVO">
+        SELECT 
+        	report_seq,
+			title,
+			description,
+			reg_dt
+		 FROM tb_report_info 
+		 WHERE report_seq = #{report_seq} :: integer
+	</select>
+	
+	
+	
+	<!--My History-->
+	<select id ="myHistory3" parameterType="map" resultType="smartView.ai.project.model.ReportVO">
+		select "name" ,timestamp, 'workflow' as check, uuid as id, pid
+		from workflows w 
+		left outer join project_workflow_map pwm on w.uuid = pwm.wid 
+		where timestamp != 0 and user_id = #{user_id}
+		union
+		select title as name, extract(epoch from upd_dt at time zone 'Etc/gmt-9')*1000 as timestamp, 'report' as check, (tri.report_seq::text) as id, pid
+		from tb_report_info tri
+		left outer join tb_project_report_mapping tprm on tri.report_seq = tprm.report_seq 
+		where tri.reg_id = #{user_id}
+		order by timestamp desc
+		limit 3
+	</select>
+
+	<!-- projectId로 workflow List 조회 -->
+	<select id = "slelectWorkflowList" parameterType="java.lang.String" resultType="smartView.ai.project.model.WorkflowVO">
+	SELECT pwm.pid
+		 , w.uuid
+		 , w.name
+		 , p.name as pname
+	FROM project_workflow_map pwm 
+		,workflows w
+		, projects p
+	WHERE pwm.pid = #{projectId}
+		AND pwm.wid = w.uuid
+		AND pwm.pid = p.uuid		
+	</select>
+	
+	
+	<!-- workflow 공유 (1-1. 공유 가능 유저 조회) -->
+	<select id="selectWorkflowShareableUsers" parameterType="Map" resultType="java.util.HashMap">
+		SELECT
+			id, "name", grade
+		FROM
+			user_info
+		WHERE
+			id != #{user_id}
+			<if test='name != null and name != ""'>
+				AND name ILIKE '%'||#{name}||'%'
+			</if>
+	</select>
+	
+	<!-- workflow 공유 (1-2. 공유 중인 유저 조회) -->
+	<select id="selectWorkflowSharedUsers" parameterType="Map" resultType="java.util.HashMap">
+		SELECT
+			  a.shared_target_id AS "id"
+			, b."name" 
+		FROM
+			tb_shared_workflow_mapping AS a
+		LEFT OUTER JOIN
+			user_info AS b
+			ON a.shared_target_id = b.id
+		WHERE
+			a.user_id = #{user_id}
+			AND a.wid = #{wid}
+	</select>
+	
+	<!-- workflow 공유 (2-1. workflow가 공유가 됐었는지 확인) -->
+	<select id="selectCheckWorkflowShare" parameterType="Map" resultType="int">
+		SELECT
+			COUNT(shared_seq)
+		FROM
+			tb_shared_workflow_info
+		WHERE
+			user_seq = #{user_seq}
+			AND user_id = #{user_id}
+			AND wid = #{wid}
+	</select>
+	
+	<!-- workflow 공유 (2-2. 공유할 workflow 정보 조회) -->
+	<select id="selectOwnerWorkflowInfo" parameterType="Map" resultType="java.util.HashMap">
+		SELECT
+			*
+		FROM
+			workflows
+		WHERE
+			user_id = #{user_id}
+			AND uuid = #{wid}
+			AND msg_version = #{version}
+	</select>
+	
+	<!-- workflow 공유  (3-1. 공유용 정보 생성)-->
+	<insert id="insertWorkflowShare" parameterType="Map" useGeneratedKeys="true" keyProperty="shared_seq" keyColumn="shared_seq">
+		INSERT INTO tb_shared_workflow_info(wid, "name", "data", descr, msg_version, is_batch, "verbose", expire_dt, user_seq, user_id)
+		VALUES (#{wid}, #{name}, #{data}, #{descr}, #{msg_version}, #{is_batch}, #{verbose}, #{expire_dt}::timestamp, #{user_seq}, #{user_id})
+	</insert>
+	
+	<!-- workflow 공유  (3-2. 공유용 정보 생성 하면서 파일 복사된 path 정보 추가)-->
+	<insert id="insertShareFileInfo" parameterType="Map">
+		INSERT INTO tb_shared_workflow_file_info(shared_seq, file_path, org_file_path, user_seq, user_id)
+		VALUES (#{shared_seq}, #{file_path}, #{org_file_path}, #{user_seq}, #{user_id})
+	</insert>
+	
+	<!-- workflow 공유 (3-3. 공유 파일 경로로 최종 수정된 JsonData 업데이트)-->
+	<update id="updateWorkflowShareData" parameterType="map">
+		UPDATE tb_shared_workflow_info SET "data" = #{data} WHERE wid = #{wid} AND shared_seq = #{shared_seq} AND user_seq = #{user_seq}
+	</update>
+	
+	<!-- workflow 공유  (4. 공유 대상자 생성)-->
+	<insert id="insertWorkflowShareUsers" parameterType="Map">
+		INSERT INTO tb_shared_workflow_mapping(wid, shared_target_seq, shared_target_id, shared_target_type, user_seq, user_id)
+		VALUES (#{wid}, #{shared_target_seq}, #{shared_target_id}, #{shared_target_type}, #{user_seq}, #{user_id})
+	</insert>
+	
+</mapper>
